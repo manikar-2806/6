@@ -1,68 +1,97 @@
 const express = require("express");
-const app = express();
-const { Todo } = require("./models");
 const bodyParser = require("body-parser");
 const path = require("path");
-const { response } = require("express");
+const cookieParser = require("cookie-parser");
+const csrf = require("tiny-csrf");
 
+const { Todo } = require("./models");
+
+const app = express();
 app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: false }));
 app.set("view engine", "ejs");
-app.use(express.static(path.join(__dirname + "/public")));
-// app.use(express.static("public"));
+// eslint-disable-next-line no-undef
+app.use(express.static(path.join(__dirname, "public")));
+app.use(cookieParser("Some secret info"));
+app.use(csrf("UicgFjabMtvsSJEHUSfK3Dz0NR6K0pIm", ["DELETE", "PUT", "POST"]));
 
-app.get("/", async (req, res) => {
-  const allTodos = await Todo.getTodos();
-  if (req.accepts("html")) {
-    res.render("index", {
-      allTodos,
+app.get("/", async function (request, response) {
+  const overDue = await Todo.overDue();
+  const dueToday = await Todo.dueToday();
+  const dueLater = await Todo.dueLater();
+  const completedItems = await Todo.completedItems();
+  if (request.accepts("html")) {
+    response.render("index", {
+      overDue,
+      dueToday,
+      dueLater,
+      completedItems,
+      csrfToken: request.csrfToken(),
     });
   } else {
-    res.json(allTodos);
-  }
-});
-
-app.get("/todos", async (req, res) => {
-  try {
-    const todos = await Todo.findAll({ order: [["id", "ASC"]] });
-    return res.json(todos);
-  } catch (error) {
-    console.log(error);
-    return res.status(422).json(error);
-  }
-});
-
-app.post("/todos", async (req, res) => {
-  console.log("Body : ", req.body);
-  try {
-    const todo = await Todo.addTodo({
-      title: req.body.title,
-      dueDate: req.body.dueDate,
-      completed: false,
+    response.json({
+      overDue,
+      dueToday,
+      dueLater,
+      completedItems,
     });
-    return res.json(todo);
-  } catch (error) {
-    console.log(error);
-    return response.status(422).json(error);
   }
 });
 
-app.put("/todos/:id/markAsCompleted", async (req, res) => {
-  console.log("Todo marks completed : ", req.params.id);
-  const todo = await Todo.findByPk(req.params.id);
+app.get("/todos/:id", async function (request, response) {
   try {
-    const updateTodo = await todo.markAsCompleted();
-    return res.json(updateTodo);
+    const todo = await Todo.findByPk(request.params.id);
+    return response.json(todo);
   } catch (error) {
     console.log(error);
     return response.status(422).json(error);
   }
 });
 
-// eslint-disable-next-line no-unused-vars
-app.delete("/todos/:id", async (req, res) => {
-  console.log("We have to delete a Todo with ID: ", req.params.id);
-  const affectedRow = await Todo.destroy({ where: { id: req.params.id } });
-  res.send(affectedRow ? true : false);
+app.post("/todos", async function (request, response) {
+  try {
+    await Todo.addTodo({
+      title: request.body.title,
+      dueDate: request.body.dueDate,
+    });
+    return response.redirect("/");
+  } catch (error) {
+    console.log(error);
+    return response.status(422).json(error);
+  }
+});
+
+app.put("/todos/:id", async function (request, response) {
+  const todo = await Todo.findByPk(request.params.id);
+  const completionStatus = request.body.completed;
+  try {
+    const updatedTodo = await todo.setCompletionStatus({
+      completionStatus,
+    });
+    return response.json(updatedTodo);
+  } catch (error) {
+    console.log(error);
+    return response.status(422).json(error);
+  }
+});
+
+app.delete("/todos/:id", async function (request, response) {
+  console.log("Deleting a Todo with id: " + request.params.id);
+  const todo = await Todo.findByPk(request.params.id);
+  try {
+    if (todo) {
+      await todo.deleteATodo();
+      return response.json({
+        success: true,
+      });
+    } else {
+      return response.status(404);
+    }
+  } catch (error) {
+    return response.status(422).json({
+      success: false,
+    });
+  }
 });
 
 module.exports = app;
